@@ -311,3 +311,178 @@ If you encounter issues:
 3. Verify API key validity
 4. Check file permissions
 5. Contact support with log files if needed
+
+
+# Detailed Code Block Explanation - OpenAI Version
+
+## 1. Imports and Initial Setup
+```python
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+# ... other imports ...
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+```
+This section:
+- Imports all necessary tools and libraries
+- Loads secret information (like API keys) from a .env file
+- Sets up basic functionality for web scraping and AI analysis
+
+## 2. Configuration and API Setup
+```python
+# Configuration
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY not found in environment variables")
+
+HEADLESS_MODE = True
+WAIT_TIMEOUT = 10
+MAX_THREADS = 5
+```
+This part:
+- Gets the OpenAI API key from environment variables
+- Sets up basic settings like:
+  * Running Firefox invisibly (HEADLESS_MODE)
+  * How long to wait for web pages (WAIT_TIMEOUT)
+  * How many parallel processes to run (MAX_THREADS)
+
+## 3. Logging Setup
+```python
+log_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+log_handler = logging.handlers.RotatingFileHandler(
+    'trades_analyzer.log',
+    maxBytes=10_000_000,  # 10MB
+    backupCount=5
+)
+```
+This sets up:
+- A system to record all program activities
+- Log files that automatically rotate at 10MB
+- Keeps last 5 log files for history
+
+## 4. File Management Functions
+```python
+def initialize_json_file() -> None:
+    """Initialize JSON file if it doesn't exist."""
+    if not os.path.exists(OUTPUT_FILE):
+        with open(OUTPUT_FILE, 'w') as f:
+            json.dump({
+                "trading_sessions": []
+            }, f, indent=2)
+
+def write_to_json_file(data: Dict[str, Any]) -> None:
+    """Write data to JSON file in a thread-safe manner."""
+```
+These functions:
+- Create and manage the output file
+- Safely write new trading data
+- Organize data by trading sessions
+- Handle multiple processes writing at once
+
+## 5. Tweet Collection Function
+```python
+def get_congress_member_tweets(username: str) -> List[tuple]:
+    """Fetch tweets for a given congressional member."""
+    options = webdriver.FirefoxOptions()
+    if HEADLESS_MODE:
+        options.add_argument('--headless')
+    driver = webdriver.Firefox(options=options)
+```
+This function:
+- Opens Firefox browser (invisibly)
+- Goes to a Twitter profile
+- Collects all recent tweets
+- Handles errors if Twitter doesn't load
+
+## 6. OpenAI Analysis Function
+```python
+def analyze_tweet(username: str, text: str) -> Optional[Dict[str, Union[str, int]]]:
+    """Analyze tweet content using GPT to extract trading information."""
+    client = OpenAI(api_key=OPENAI_API_KEY)
+    
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{
+                "role": "system",
+                "content": """..."""
+            }]
+```
+This function:
+- Takes a tweet
+- Sends it to GPT-3.5-turbo
+- Uses a detailed prompt to analyze trading information
+- Returns structured data about any trades mentioned
+
+## 7. Tweet Processing Function
+```python
+def process_tweet(username: str, text: str) -> None:
+    """Process a single tweet and write the analysis results to JSON file."""
+    if not text:
+        return
+        
+    stock_symbols = re.findall(r'\$([A-Z]+)', text)
+```
+This function:
+- Checks tweets for stock symbols ($AAPL format)
+- Only analyzes tweets with stock mentions
+- Saves analysis results to the JSON file
+
+## 8. Main Analysis Runner
+```python
+def run_analysis() -> None:
+    """Main analysis function that runs at market open."""
+    try:
+        logger.info(f"Starting analysis at {get_timestamp_str()}")
+        
+        # Read Twitter handles
+        with open("twitter_handles.txt", "r") as f:
+            twitter_handles = [line.strip() for line in f.readlines()]
+```
+This coordinates:
+- Reading the list of Twitter accounts
+- Starting multiple threads for faster processing
+- Managing the overall analysis process
+
+## 9. Scheduling System
+```python
+def schedule_market_open() -> None:
+    """Schedule the script to run at market open (9:30 AM EST)."""
+    # Schedule daily runs at 9:30 AM EST
+    schedule.every().monday.at("09:30").do(run_analysis)
+    schedule.every().tuesday.at("09:30").do(run_analysis)
+```
+This part:
+- Sets up automatic running at market open
+- Includes a test mode for immediate running
+- Adds hourly checks to ensure it's still running
+
+## 10. Background Process Setup
+```python
+def create_daemon():
+    """Run the program as a daemon process."""
+    try:
+        if os.name != 'nt':  # Not on Windows
+            pid = os.fork()
+```
+This function:
+- Makes the program run in the background
+- Sets up proper logging
+- Handles different operating systems
+
+## Main Differences from Gemini Version:
+1. Uses OpenAI's GPT-3.5-turbo instead of Gemini
+2. Slightly different API setup and error handling
+3. Similar core functionality but different AI interface
+4. Includes full market hours scheduling by default
+5. Similar daemon process handling
+
+The workflow remains the same:
+1. Start program
+2. Load Twitter handles
+3. Check for tweets with stock symbols
+4. Analyze using GPT-3.5
+5. Save results
+6. Keep running on schedule

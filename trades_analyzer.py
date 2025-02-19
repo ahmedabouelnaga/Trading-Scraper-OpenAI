@@ -3,6 +3,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.webdriver.common.keys import Keys
 import re
 import threading
 from openai import OpenAI
@@ -121,6 +122,82 @@ def write_to_json_file(data: Dict[str, Any]) -> None:
             logger.error(f"Error writing to JSON file: {str(e)}")
             logger.error(traceback.format_exc())
 
+def check_login_status(driver) -> bool:
+    """Check if currently logged into Twitter."""
+    try:
+        # Look for elements that only appear when logged out
+        logout_indicators = driver.find_elements(By.CSS_SELECTOR, '[data-testid="loginButton"], [data-testid="signupButton"]')
+        return len(logout_indicators) == 0
+    except Exception as e:
+        logger.error(f"Error checking login status: {str(e)}")
+        return False
+
+def login_to_twitter(driver) -> bool:
+    """Attempt to log in to Twitter using credentials from environment variables."""
+    try:
+        TWITTER_EMAIL = os.getenv('TWITTER_USERNAME')
+        TWITTER_PASSWORD = os.getenv('TWITTER_PASSWORD')
+        
+        if not TWITTER_EMAIL or not TWITTER_PASSWORD:
+            raise ValueError("Twitter credentials not found in environment variables")
+            
+        # Navigate to login page
+        driver.get("https://twitter.com/i/flow/login")
+        wait = WebDriverWait(driver, WAIT_TIMEOUT)
+        
+        # Enter email
+        email_input = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, 'input[autocomplete="username"]')
+        ))
+        email_input.send_keys(TWITTER_EMAIL)
+        email_input.send_keys(Keys.RETURN)
+        
+        # Enter password
+        password_input = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, 'input[name="password"]')
+        ))
+        password_input.send_keys(TWITTER_PASSWORD)
+        password_input.send_keys(Keys.RETURN)
+        
+        # Wait for home timeline to load
+        wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, '[data-testid="primaryColumn"]')
+        ))
+        
+        # Verify login success
+        return check_login_status(driver)
+        
+    except Exception as e:
+        logger.error(f"Login failed: {str(e)}")
+        return False
+def scroll_to_load_tweets(driver, max_scrolls=5):
+    """Scroll the page to load more tweets."""
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    tweets_found = False
+    scrolls = 0
+    
+    while not tweets_found and scrolls < max_scrolls:
+        # Scroll down
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)  # Wait for content to load
+        
+        # Calculate new scroll height
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        
+        # Try to find tweets
+        articles = driver.find_elements(By.TAG_NAME, 'article')
+        if articles:
+            tweets_found = True
+            break
+            
+        # Break if no more scrolling is possible
+        if new_height == last_height:
+            break
+            
+        last_height = new_height
+        scrolls += 1
+    
+    return tweets_found
 def get_congress_member_tweets(username: str) -> List[tuple]:
     """Fetch tweets for a given congressional member."""
     options = webdriver.FirefoxOptions()
@@ -130,14 +207,39 @@ def get_congress_member_tweets(username: str) -> List[tuple]:
     tweets = []
     
     try:
+
+        # First check login status
+        if not check_login_status(driver):
+            logger.info("Not logged in. Attempting to log in...")
+            login_success = login_to_twitter(driver)
+            if not login_success:
+                logger.error("Failed to log in to Twitter")
+                return []
+
         driver.get(f"https://twitter.com/{username}")
         wait = WebDriverWait(driver, WAIT_TIMEOUT)
+                
+        # Wait for the timeline to be present
+        try:
+            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, '[data-testid="primaryColumn"]')))
+        except TimeoutException:
+            logger.error(f"Timeline not found for {username}")
+            return []
         
+        # Scroll and wait for tweets to load
+        if not scroll_to_load_tweets(driver):
+            logger.error(f"No tweets found for {username} after scrolling")
+            return []
+        
+        # Now get all loaded tweets
         tweet_elements = wait.until(EC.presence_of_all_elements_located(
-            (By.CSS_SELECTOR, '[data-testid="tweet"]')
+            (By.CSS_SELECTOR, 'div')
         ))
-        
+        logger.info(f"Found {len(tweet_elements)} tweets for {username}")
+        #FIGURE OUT WTF IS GOING ON
         for tweet in tweet_elements:
+            # Add this inside the loop before trying to find the text
+            print(f"Article HTML: {tweet.get_attribute('outerHTML')[:200]}")
             try:
                 tweet_text = tweet.find_element(By.CSS_SELECTOR, '[data-testid="tweetText"]').text
                 tweets.append((username, tweet_text))
@@ -307,14 +409,14 @@ def schedule_market_open() -> None:
     initialize_json_file()
     
     # TEST MODE: Uncomment the following line to run analysis immediately without waiting for market open
-    # run_analysis(); return  # TEST MODE
+    run_analysis(); return  # TEST MODE
     
     # Schedule daily runs at 9:30 AM EST
-    schedule.every().monday.at("09:30").do(run_analysis)
+    """schedule.every().monday.at("09:30").do(run_analysis)
     schedule.every().tuesday.at("09:30").do(run_analysis)
     schedule.every().wednesday.at("09:30").do(run_analysis)
     schedule.every().thursday.at("09:30").do(run_analysis)
-    schedule.every().friday.at("09:30").do(run_analysis)
+    schedule.every().friday.at("09:30").do(run_analysis)"""
     
     # Add a heartbeat log every hour to show the script is still running
     schedule.every().hour.do(lambda: logger.info("Scheduler heartbeat - still running"))
